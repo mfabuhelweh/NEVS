@@ -1,0 +1,8 @@
+{
+  "name": "NEVS - National Electronic Voting System",
+  "description": "A secure, transparent, and sovereign electronic voting platform powered by Blockchain, AI, and Zero-Knowledge Proofs.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

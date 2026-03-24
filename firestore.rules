@@ -1,0 +1,190 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{uid}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - name: string (optional)
+    //   - role: string (required, 'voter' or 'admin')
+    //   - nationalId: string (optional)
+    //   - districtId: string (optional)
+    //   - hasVoted: boolean (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: /elections/{electionId}
+    // Fields:
+    //   - id: string (required)
+    //   - title: string (required)
+    //   - description: string (optional)
+    //   - startDate: timestamp (required)
+    //   - endDate: timestamp (required)
+    //   - status: string (required, 'draft', 'active', 'completed')
+    //
+    // Collection: /elections/{electionId}/candidates/{candidateId}
+    // Fields:
+    //   - id: string (required)
+    //   - electionId: string (required)
+    //   - districtId: string (required)
+    //   - name: string (required)
+    //   - party: string (optional)
+    //   - image: string (optional)
+    //   - votes: number (required)
+    //
+    // Collection: /elections/{electionId}/districts/{districtId}
+    // Fields:
+    //   - id: string (required)
+    //   - electionId: string (required)
+    //   - name: string (required)
+    //   - voterCount: number (required)
+    //
+    // Collection: /elections/{electionId}/votes/{voteId}
+    // Fields:
+    //   - id: string (required)
+    //   - electionId: string (required)
+    //   - candidateId: string (required)
+    //   - districtId: string (required)
+    //   - timestamp: timestamp (required)
+    //   - zkpProof: string (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          (request.auth.token.email == "mohamadabuhalwe912@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUrl(url) {
+      return url is string &&
+        (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isRecent(ts) {
+      return ts > request.time - duration.value(5, 'm') &&
+             ts < request.time + duration.value(5, 'm');
+    }
+
+    function isValidUser(data) {
+      return data.uid is string &&
+             isValidEmail(data.email) &&
+             data.role in ['voter', 'admin'] &&
+             (!('hasVoted' in data) || data.hasVoted is bool) &&
+             (!('nationalId' in data) || data.nationalId is string);
+    }
+
+    function isValidElection(data) {
+      return data.title is string &&
+             data.status in ['active', 'closed', 'draft', 'completed'] &&
+             (!('totalVotes' in data) || data.totalVotes is number);
+    }
+
+    function isValidCandidate(data) {
+      return data.name is string &&
+             (!('votes' in data) || data.votes is number);
+    }
+
+    function isValidVote(data) {
+      return data.electionId is string &&
+             data.candidateId is string &&
+             data.districtId is string &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidVoterRegistry(data) {
+      return data.nationalId is string &&
+             data.name is string &&
+             data.districtName is string &&
+             data.electionId is string &&
+             data.hasVoted is bool;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /voters_registry/{nationalId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidVoterRegistry(request.resource.data);
+      allow update: if isAdmin() || (isAuthenticated() && 
+                                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.nationalId == nationalId &&
+                                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hasVoted']) &&
+                                     request.resource.data.hasVoted == true);
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'voter' || isAdmin());
+      allow update: if isAuthenticated() && isOwner(userId) && 
+                      isValidUser(request.resource.data) &&
+                      (request.resource.data.role == resource.data.role || isAdmin()) &&
+                      // Prevent un-voting (cannot change hasVoted from true to false)
+                      (!(resource.data.hasVoted == true) || request.resource.data.hasVoted == true || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /elections/{electionId} {
+      allow read: if true;
+      allow create, delete: if isAdmin() && isValidElection(request.resource.data);
+      allow update: if (isAdmin() && isValidElection(request.resource.data)) ||
+                      (isAuthenticated() && 
+                       isValidElection(request.resource.data) &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalVotes']) &&
+                       request.resource.data.totalVotes == resource.data.totalVotes + 1);
+
+      match /candidates/{candidateId} {
+        allow read: if true;
+        allow create, delete: if isAdmin() && isValidCandidate(request.resource.data);
+        allow update: if (isAdmin() && isValidCandidate(request.resource.data)) || 
+                        (isAuthenticated() && 
+                         isValidCandidate(request.resource.data) &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes']) &&
+                         request.resource.data.votes == resource.data.votes + 1);
+      }
+
+      match /districts/{districtId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+    }
+
+    match /votes/{voteId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                      isValidVote(request.resource.data) && 
+                      isRecent(request.resource.data.timestamp) &&
+                      // Ensure user hasn't voted yet (handle missing field)
+                      (!(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.hasVoted == true) || isAdmin());
+      allow update, delete: if false;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

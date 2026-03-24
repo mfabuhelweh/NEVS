@@ -1,0 +1,98 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the voting system (voter or admin).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique ID of the user." },
+        "email": { "type": "string", "format": "email", "description": "The email address of the user." },
+        "name": { "type": "string", "description": "The full name of the user." },
+        "role": { "type": "string", "enum": ["voter", "admin"], "description": "The role of the user." },
+        "nationalId": { "type": "string", "description": "The national ID of the voter." },
+        "districtId": { "type": "string", "description": "The ID of the electoral district the voter belongs to." },
+        "hasVoted": { "type": "boolean", "description": "Whether the user has already cast a vote." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user account was created." }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Election": {
+      "title": "Election",
+      "description": "An election event.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the election." },
+        "title": { "type": "string", "description": "The title of the election." },
+        "description": { "type": "string", "description": "The description of the election." },
+        "startDate": { "type": "string", "format": "date-time", "description": "When the election starts." },
+        "endDate": { "type": "string", "format": "date-time", "description": "When the election ends." },
+        "status": { "type": "string", "enum": ["draft", "active", "completed"], "description": "The current status of the election." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the election was created." }
+      },
+      "required": ["id", "title", "status"]
+    },
+    "Candidate": {
+      "title": "Candidate",
+      "description": "A candidate in an election.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the candidate." },
+        "electionId": { "type": "string", "description": "The ID of the election the candidate is in." },
+        "districtId": { "type": "string", "description": "The ID of the district the candidate is running in." },
+        "name": { "type": "string", "description": "The name of the candidate." },
+        "party": { "type": "string", "description": "The party the candidate belongs to." },
+        "image": { "type": "string", "format": "uri", "description": "The URL of the candidate's image." },
+        "votes": { "type": "integer", "description": "The number of votes the candidate has received." }
+      },
+      "required": ["id", "electionId", "districtId", "name", "votes"]
+    },
+    "District": {
+      "title": "District",
+      "description": "An electoral district.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the district." },
+        "electionId": { "type": "string", "description": "The ID of the election the district belongs to." },
+        "name": { "type": "string", "description": "The name of the district." },
+        "voterCount": { "type": "integer", "description": "The total number of registered voters in the district." }
+      },
+      "required": ["id", "electionId", "name", "voterCount"]
+    },
+    "Vote": {
+      "title": "Vote",
+      "description": "A cast vote (anonymized).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the vote (transaction hash)." },
+        "electionId": { "type": "string", "description": "The ID of the election." },
+        "candidateId": { "type": "string", "description": "The ID of the candidate voted for." },
+        "districtId": { "type": "string", "description": "The ID of the district where the vote was cast." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the vote was cast." },
+        "zkpProof": { "type": "string", "description": "The Zero-Knowledge Proof hash." }
+      },
+      "required": ["id", "electionId", "candidateId", "districtId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles and metadata."
+    },
+    "/elections/{electionId}": {
+      "schema": "Election",
+      "description": "Election events."
+    },
+    "/elections/{electionId}/candidates/{candidateId}": {
+      "schema": "Candidate",
+      "description": "Candidates for a specific election."
+    },
+    "/elections/{electionId}/districts/{districtId}": {
+      "schema": "District",
+      "description": "Districts for a specific election."
+    },
+    "/elections/{electionId}/votes/{voteId}": {
+      "schema": "Vote",
+      "description": "Individual anonymized votes."
+    }
+  }
+}
