@@ -54,8 +54,8 @@ import {
   Line
 } from 'recharts';
 import { cn } from './lib/utils';
-import { MOCK_ELECTION, MOCK_TRANSACTIONS } from './mockData';
-import { Election, Candidate, Voter, BlockchainTransaction, District } from './types';
+import { MOCK_ELECTION, MOCK_TRANSACTIONS, MOCK_PARTIES, MOCK_LOCAL_LISTS } from './mockData';
+import { Election, Candidate, Voter, BlockchainTransaction, District, Party, LocalList } from './types';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { 
   onAuthStateChanged, 
@@ -80,7 +80,8 @@ import {
   limit,
   serverTimestamp,
   writeBatch,
-  deleteDoc
+  deleteDoc,
+  getDocs
 } from 'firebase/firestore';
 
 // --- Components ---
@@ -136,15 +137,16 @@ const Button = ({
   );
 };
 
-const Badge = ({ children, variant = 'info' }: { children: React.ReactNode, variant?: 'success' | 'warning' | 'error' | 'info' }) => {
+const Badge = ({ children, variant = 'info', className }: { children: React.ReactNode, variant?: 'success' | 'warning' | 'error' | 'info' | 'secondary', className?: string }) => {
   const variants = {
     success: 'bg-emerald-100 text-emerald-700 border-emerald-200',
     warning: 'bg-amber-100 text-amber-700 border-amber-200',
     error: 'bg-red-100 text-red-700 border-red-200',
-    info: 'bg-blue-100 text-blue-700 border-blue-200'
+    info: 'bg-blue-100 text-blue-700 border-blue-200',
+    secondary: 'bg-slate-100 text-slate-700 border-slate-200'
   };
   return (
-    <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold border", variants[variant])}>
+    <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold border", variants[variant], className)}>
       {children}
     </span>
   );
@@ -330,22 +332,26 @@ const PublicPortal = ({ election, candidates, districts, transactions, loading }
   );
 };
 
-const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, districts, loading, onLogin }: { 
+const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, districts, parties, localLists, loading, onLogin }: { 
   user: FirebaseUser | null, 
   userProfile: any, 
   onVoteSuccess: () => void,
   election: Election | null,
   candidates: Candidate[],
   districts: District[],
+  parties: Party[],
+  localLists: LocalList[],
   loading: boolean,
   onLogin: () => void
 }) => {
-  const [step, setStep] = useState<'login' | 'id-upload' | 'verify' | 'otp' | 'vote' | 'zkp' | 'success'>('login');
+  const [step, setStep] = useState<'login' | 'id-upload' | 'verify' | 'otp' | 'district-selection' | 'local-ballot' | 'general-ballot' | 'zkp' | 'success'>('login');
   const [nationalId, setNationalId] = useState('');
   const [voterDistrict, setVoterDistrict] = useState<{ id: string, name: string } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isGeneratingZKP, setIsGeneratingZKP] = useState(false);
+  const [selectedLocalList, setSelectedLocalList] = useState<string | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null);
+  const [selectedParty, setSelectedParty] = useState<string | null>(null);
 
   useEffect(() => {
     if (userProfile?.hasVoted) {
@@ -368,7 +374,11 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
           }
 
           // Find the district ID from the elections districts list
-          const district = districts.find(d => d.name.trim() === voterData.districtName.trim());
+          const district = districts.find(d => 
+            d.name.trim().toLowerCase() === voterData.districtName.trim().toLowerCase() ||
+            voterData.districtName.trim().includes(d.name.trim()) ||
+            d.name.trim().includes(voterData.districtName.trim())
+          );
           
           setVoterDistrict({ 
             id: district?.id || 'auto-generated', 
@@ -411,7 +421,7 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
   };
 
   const handleVote = async () => {
-    if (!selectedCandidate || !user || !election) return;
+    if (!selectedParty || !user || !election) return;
 
     // Check if we are using mock data
     if (election.id === 'e1' || election.id === 'election-2025') {
@@ -429,7 +439,9 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
       const voteId = doc(collection(db, 'votes')).id;
       const voteData = {
         electionId: election.id,
-        candidateId: selectedCandidate,
+        candidateId: selectedCandidate || 'none',
+        listId: selectedLocalList || 'none',
+        partyId: selectedParty,
         districtId: voterDistrict?.id || userProfile?.districtId || 'district-1',
         districtName: voterDistrict?.name || 'غير محدد',
         timestamp: serverTimestamp(),
@@ -448,12 +460,19 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
       // 2.5 Mark national ID as voted in registry
       batch.update(doc(db, 'voters_registry', nationalId), { hasVoted: true });
       
-      // 3. Increment candidate votes
-      batch.update(doc(db, 'elections', election.id, 'candidates', selectedCandidate), {
+      // 3. Increment candidate votes if selected
+      if (selectedCandidate) {
+        batch.update(doc(db, 'elections', election.id, 'candidates', selectedCandidate), {
+          votes: increment(1)
+        });
+      }
+
+      // 4. Increment party votes
+      batch.update(doc(db, 'elections', election.id, 'parties', selectedParty), {
         votes: increment(1)
       });
       
-      // 4. Increment election total votes
+      // 5. Increment election total votes
       batch.update(doc(db, 'elections', election.id), {
         totalVotes: increment(1)
       });
@@ -614,7 +633,7 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
                   />
                 ))}
               </div>
-              <Button className="w-full py-4" onClick={() => setStep('vote')}>
+              <Button className="w-full py-4" onClick={() => setStep('district-selection')}>
                 تأكيد الدخول
               </Button>
               <button className="text-sm text-indigo-600 font-medium hover:underline">إعادة إرسال الرمز</button>
@@ -622,77 +641,167 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
           </motion.div>
         )}
 
-        {step === 'vote' && (
+        {step === 'district-selection' && (
           <motion.div
-            key="vote"
+            key="district-selection"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+          >
+            <Card className="p-8 text-center space-y-6">
+              <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <MapPin size={40} />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-900">تأكيد الدائرة الانتخابية</h2>
+              <p className="text-slate-500">بناءً على مكان إقامتك المسجل، دائرتك الانتخابية هي:</p>
+              <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100">
+                <h3 className="text-xl font-bold text-indigo-900">{voterDistrict?.name || 'جاري التحميل...'}</h3>
+              </div>
+              <Button className="w-full py-4 text-lg" onClick={() => setStep('local-ballot')}>
+                الانتقال لورقة الاقتراع المحلية
+              </Button>
+            </Card>
+          </motion.div>
+        )}
+
+        {step === 'local-ballot' && (
+          <motion.div
+            key="local-ballot"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="space-y-6"
           >
-            <div className="flex items-center justify-between bg-indigo-50 p-4 rounded-2xl border border-indigo-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white">
-                  <Shield size={20} />
-                </div>
-                <div>
-                  <p className="text-xs text-indigo-600 font-bold">جلسة تصويت آمنة</p>
-                  <p className="text-sm text-slate-700">هويتك محمية بتقنية ZKP</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-slate-500">الانتخابات الحالية</p>
-                <p className="text-sm font-bold text-slate-900">{election?.title || 'جاري التحميل...'}</p>
-                {voterDistrict && (
-                  <p className="text-[10px] text-indigo-600 font-bold mt-1">دائرتك: {voterDistrict.name}</p>
+            <div className="text-center space-y-2">
+              <Badge variant="info">ورقة الاقتراع المحلية</Badge>
+              <h2 className="text-2xl font-bold text-slate-900">قائمة نسبية مفتوحة</h2>
+              <p className="text-slate-500 text-sm">اختر قائمة واحدة، ثم اختر مرشحيك المفضلين داخلها.</p>
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="font-bold text-slate-700">القوائم المحلية في دائرتك:</h3>
+              <div className="grid grid-cols-1 gap-3">
+                {localLists.filter(l => l.districtId === voterDistrict?.id || voterDistrict?.id === 'auto-generated').length > 0 ? (
+                  localLists.filter(l => l.districtId === voterDistrict?.id || voterDistrict?.id === 'auto-generated').map((list) => (
+                    <div key={list.id} className="space-y-3">
+                      <div 
+                        onClick={() => setSelectedLocalList(selectedLocalList === list.id ? null : list.id)}
+                        className={cn(
+                          "p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between",
+                          selectedLocalList === list.id 
+                            ? "border-indigo-600 bg-indigo-50/50 shadow-sm" 
+                            : "border-slate-100 bg-white hover:border-slate-200"
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold">
+                            {list.name[0]}
+                          </div>
+                          <h4 className="font-bold text-slate-900">{list.name}</h4>
+                        </div>
+                        <ChevronRight className={cn("transition-transform", selectedLocalList === list.id ? "rotate-90" : "")} />
+                      </div>
+
+                      <AnimatePresence>
+                        {selectedLocalList === list.id && (
+                          <motion.div 
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden pr-4 space-y-2"
+                          >
+                            {candidates.filter(c => c.listId === list.id).length > 0 ? (
+                              candidates.filter(c => c.listId === list.id).map((candidate) => (
+                                <div 
+                                  key={candidate.id}
+                                  onClick={() => setSelectedCandidate(selectedCandidate === candidate.id ? null : candidate.id)}
+                                  className={cn(
+                                    "p-3 rounded-xl border transition-all cursor-pointer flex items-center gap-3",
+                                    selectedCandidate === candidate.id 
+                                      ? "border-indigo-400 bg-white shadow-sm" 
+                                      : "border-slate-100 bg-slate-50/50 hover:bg-white"
+                                  )}
+                                >
+                                  <img src={candidate.image} alt={candidate.name} className="w-10 h-10 rounded-lg object-cover" />
+                                  <span className="text-sm font-medium text-slate-700">{candidate.name}</span>
+                                  {selectedCandidate === candidate.id && (
+                                    <CheckCircle2 size={16} className="text-indigo-600 mr-auto" />
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="p-4 text-center text-slate-500 text-sm italic">
+                                لا يوجد مرشحين في هذه القائمة حالياً.
+                              </div>
+                            )}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                    <p className="text-slate-600 font-medium">لا توجد قوائم محلية مسجلة في دائرتك حالياً.</p>
+                    <p className="text-slate-400 text-xs mt-1">يرجى مراجعة اللجنة العليا للانتخابات.</p>
+                  </div>
                 )}
               </div>
             </div>
 
-            <h2 className="text-2xl font-bold text-slate-900 text-center">اختر مرشحك</h2>
-            <p className="text-center text-slate-500 text-sm">أنت تصوت في دائرة: <span className="font-bold text-indigo-600">{voterDistrict?.name || 'الكل'}</span></p>
-            
-            <div className="grid grid-cols-1 gap-4">
-              {candidates.filter(c => !voterDistrict || !c.districtId || c.districtId === voterDistrict.id || voterDistrict.id === 'auto-generated').length === 0 ? (
-                <div className="text-center py-12 bg-white rounded-2xl border border-slate-100">
-                  <Users className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                  <p className="text-slate-500">لا يوجد مرشحون مسجلون في دائرتك حالياً.</p>
-                </div>
-              ) : (
-                candidates
-                  .filter(c => !voterDistrict || !c.districtId || c.districtId === voterDistrict.id || voterDistrict.id === 'auto-generated')
-                  .map((candidate) => (
-                  <div 
-                    key={candidate.id}
-                    onClick={() => setSelectedCandidate(candidate.id)}
-                    className={cn(
-                      "p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center gap-4",
-                      selectedCandidate === candidate.id 
-                        ? "border-indigo-600 bg-indigo-50/50 shadow-lg shadow-indigo-100" 
-                        : "border-slate-100 bg-white hover:border-slate-200"
-                    )}
-                  >
-                    <img src={candidate.image} alt={candidate.name} className="w-16 h-16 rounded-xl object-cover" />
-                    <div className="flex-1">
-                      <h4 className="font-bold text-slate-900">{candidate.name}</h4>
-                      <p className="text-sm text-slate-500">{candidate.party}</p>
+            <Button 
+              className="w-full py-4 text-lg" 
+              disabled={!selectedLocalList}
+              onClick={() => setStep('general-ballot')}
+            >
+              التالي: ورقة الاقتراع العامة
+            </Button>
+          </motion.div>
+        )}
+
+        {step === 'general-ballot' && (
+          <motion.div
+            key="general-ballot"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="space-y-6"
+          >
+            <div className="text-center space-y-2">
+              <Badge variant="warning">ورقة الاقتراع العامة</Badge>
+              <h2 className="text-2xl font-bold text-slate-900">قائمة نسبية مغلقة</h2>
+              <p className="text-slate-500 text-sm">اختر حزباً واحداً فقط من القائمة الوطنية.</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              {parties.map((party) => (
+                <div 
+                  key={party.id}
+                  onClick={() => setSelectedParty(party.id)}
+                  className={cn(
+                    "p-6 rounded-2xl border-2 transition-all cursor-pointer flex flex-col items-center gap-4 text-center relative",
+                    selectedParty === party.id 
+                      ? "border-indigo-600 bg-indigo-50/50 shadow-lg" 
+                      : "border-slate-100 bg-white hover:border-slate-200"
+                  )}
+                >
+                  <img src={party.logo} alt={party.name} className="w-20 h-20 rounded-2xl object-contain bg-slate-50 p-2" />
+                  <h4 className="font-bold text-slate-900 text-sm">{party.name}</h4>
+                  {selectedParty === party.id && (
+                    <div className="absolute top-3 right-3 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white">
+                      <CheckCircle2 size={16} />
                     </div>
-                    {selectedCandidate === candidate.id && (
-                      <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white">
-                        <CheckCircle2 size={16} />
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
+                  )}
+                </div>
+              ))}
             </div>
 
             <Button 
               className="w-full py-4 text-lg" 
-              disabled={!selectedCandidate}
+              disabled={!selectedParty}
               onClick={handleVote}
             >
-              تأكيد التصويت وإرسال الصوت
+              تأكيد التصويت النهائي
             </Button>
+            <button onClick={() => setStep('local-ballot')} className="w-full text-sm text-slate-500 hover:text-indigo-600">العودة للورقة المحلية</button>
           </motion.div>
         )}
 
@@ -763,10 +872,11 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
   );
 };
 
-const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
+const AdminDashboard = ({ userProfile, parties, localLists }: { userProfile: any, parties: Party[], localLists: LocalList[] }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'elections' | 'candidates' | 'districts' | 'voters'>('overview');
   const [elections, setElections] = useState<Election[]>([]);
+  const [isSeeding, setIsSeeding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [newElection, setNewElection] = useState({ title: '', description: '', startDate: '', endDate: '' });
   const [selectedElectionId, setSelectedElectionId] = useState<string | null>(null);
@@ -774,7 +884,7 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
   const [districts, setDistricts] = useState<District[]>([]);
   const [showCandidateModal, setShowCandidateModal] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
-  const [candidateForm, setCandidateForm] = useState({ name: '', party: '', image: '', districtId: '', program: '' });
+  const [candidateForm, setCandidateForm] = useState({ name: '', partyId: '', image: '', districtId: '', listId: '', program: '' });
   const [showDistrictModal, setShowDistrictModal] = useState(false);
   const [editingDistrict, setEditingDistrict] = useState<District | null>(null);
   const [districtForm, setDistrictForm] = useState({ name: '', voterCount: 0 });
@@ -888,8 +998,8 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
 
   const handleSaveCandidate = async () => {
     if (!selectedElectionId) return;
-    if (!candidateForm.name || !candidateForm.party) {
-      alert("يرجى ملء الحقول الأساسية");
+    if (!candidateForm.name || !candidateForm.partyId) {
+      alert("يرجى ملء الحقول الأساسية (الاسم والحزب)");
       return;
     }
 
@@ -905,7 +1015,7 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
       }
       setShowCandidateModal(false);
       setEditingCandidate(null);
-      setCandidateForm({ name: '', party: '', image: '', districtId: '', program: '' });
+      setCandidateForm({ name: '', partyId: '', image: '', districtId: '', listId: '', program: '' });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `elections/${selectedElectionId}/candidates`);
     }
@@ -1046,20 +1156,60 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
   };
 
   useEffect(() => {
-    if (!loading && elections.length === 0 && userProfile?.role === 'admin') {
-      console.log("No elections found, triggering auto-seed...");
-      seedInitialData();
-    }
+    // We removed auto-seed to avoid confusing the user with automatic confirmation dialogs.
+    // They can use the "Reset and Seed Data" button manually.
   }, [loading, elections.length, userProfile]);
 
   const seedInitialData = async () => {
-    if (elections.length > 0) {
-      alert("النظام يحتوي بالفعل على بيانات. لا يمكن إعادة التهيئة.");
-      return;
-    }
+    console.log("seedInitialData called");
+    const confirmReset = window.confirm("تحذير: سيتم حذف كافة البيانات الحالية (الانتخابات، الناخبين، الأصوات) وإعادة تهيئة النظام ببيانات جديدة. هل أنت متأكد؟");
+    if (!confirmReset) return;
     
-    setLoading(true);
+    setIsSeeding(true);
+    console.log("Starting hard reset and seed...");
     try {
+      // 1. Clear Existing Data
+      const collectionsToClear = ['elections', 'voters_registry', 'votes'];
+      
+      for (const colName of collectionsToClear) {
+        console.log(`Clearing collection: ${colName}`);
+        const snapshot = await getDocs(collection(db, colName));
+        let batch = writeBatch(db);
+        let count = 0;
+        
+        for (const docSnap of snapshot.docs) {
+          // If it's elections, we also need to clear subcollections
+          if (colName === 'elections') {
+            const subcols = ['candidates', 'districts', 'parties', 'local_lists'];
+            for (const sub of subcols) {
+              const subSnap = await getDocs(collection(db, 'elections', docSnap.id, sub));
+              for (const sDoc of subSnap.docs) {
+                batch.delete(sDoc.ref);
+                count++;
+                if (count >= 400) {
+                  await batch.commit();
+                  batch = writeBatch(db);
+                  count = 0;
+                }
+              }
+            }
+          }
+          batch.delete(docSnap.ref);
+          count++;
+          if (count >= 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            count = 0;
+          }
+        }
+        if (count > 0) {
+          await batch.commit();
+        }
+      }
+
+      console.log("Data cleared. Starting seeding...");
+
+      // 2. Seed New Data
       const batch = writeBatch(db);
       
       // 1. Create Election Document
@@ -1078,35 +1228,61 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
       };
       
       batch.set(electionRef, electionData);
+      console.log(`Election created: ${electionId}`);
 
       // 2. Create Districts
-      const districtMap = new Map();
       for (const district of MOCK_ELECTION.districts) {
         const dRef = doc(db, 'elections', electionId, 'districts', district.id);
         batch.set(dRef, { 
           name: district.name,
           voterCount: district.voterCount 
         });
-        districtMap.set(district.id, dRef.id);
       }
+      console.log("Districts seeded.");
 
       // 3. Create Candidates
       for (const candidate of MOCK_ELECTION.candidates) {
         const cRef = doc(db, 'elections', electionId, 'candidates', candidate.id);
         batch.set(cRef, {
           name: candidate.name,
-          party: candidate.party,
+          partyId: candidate.partyId,
           image: candidate.image,
           votes: 0,
           districtId: candidate.districtId,
+          listId: candidate.listId,
           program: candidate.program || ''
         });
       }
+      console.log("Candidates seeded.");
+
+      // 3.5 Create Parties
+      for (const party of MOCK_PARTIES) {
+        const pRef = doc(db, 'elections', electionId, 'parties', party.id);
+        batch.set(pRef, {
+          name: party.name,
+          logo: party.logo,
+          votes: 0
+        });
+      }
+      console.log("Parties seeded.");
+
+      // 3.6 Create Local Lists
+      for (const list of MOCK_LOCAL_LISTS) {
+        const lRef = doc(db, 'elections', electionId, 'local_lists', list.id);
+        batch.set(lRef, {
+          name: list.name,
+          districtId: list.districtId,
+          votes: 0
+        });
+      }
+      console.log("Local lists seeded.");
 
       // 4. Create Initial Voters in Registry
       const initialVoters = [
-        { nationalId: '1111111111', name: 'أحمد محمد', districtName: 'العاصمة' },
-        { nationalId: '2222222222', name: 'سارة علي', districtName: 'المنطقة الشمالية' }
+        { nationalId: '1111111111', name: 'أحمد محمد', districtName: 'العاصمة - المنطقة الأولى' },
+        { nationalId: '2222222222', name: 'سارة علي', districtName: 'المنطقة الشمالية' },
+        { nationalId: '3333333333', name: 'محمود حسن', districtName: 'المنطقة الساحلية' },
+        { nationalId: '4444444444', name: 'ليلى إبراهيم', districtName: 'المنطقة الجنوبية' }
       ];
       for (const voter of initialVoters) {
         const vRef = doc(db, 'voters_registry', voter.nationalId);
@@ -1116,15 +1292,17 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
           hasVoted: false
         });
       }
+      console.log("Voters registry seeded.");
 
       await batch.commit();
-      alert("تمت تهيئة النظام بنجاح! يمكنك الآن البدء في عملية التصويت.");
-      setLoading(false);
+      console.log("Seeding complete.");
+      alert("تمت إعادة ضبط النظام وتهيئة البيانات بنجاح!");
+      setIsSeeding(false);
     } catch (error) {
-      console.error("Seeding failed:", error);
-      handleFirestoreError(error, OperationType.WRITE, 'elections/seed');
-      alert("فشل تهيئة النظام. يرجى التحقق من صلاحيات Firestore.");
-      setLoading(false);
+      console.error("Hard reset and seeding failed:", error);
+      handleFirestoreError(error, OperationType.WRITE, 'system/reset');
+      alert("فشل إعادة ضبط النظام. يرجى التحقق من صلاحيات Firestore.");
+      setIsSeeding(false);
     }
   };
 
@@ -1149,9 +1327,18 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
           <p className="text-slate-500">إدارة العملية الانتخابية ومراقبة الأداء الأمني.</p>
         </div>
         <div className="flex gap-3">
-          {elections.length === 0 && (
-            <Button variant="outline" icon={Database} onClick={seedInitialData}>تهيئة البيانات</Button>
-          )}
+          <Button 
+            variant="outline" 
+            icon={isSeeding ? RefreshCw : Database} 
+            onClick={seedInitialData} 
+            disabled={isSeeding}
+            className={cn(
+              "text-rose-600 border-rose-200 hover:bg-rose-50",
+              isSeeding && "opacity-70"
+            )}
+          >
+            {isSeeding ? "جاري التهيئة..." : "إعادة ضبط وتهيئة البيانات"}
+          </Button>
           <Button variant="outline" icon={FileText}>تقارير التدقيق</Button>
           <Button variant="primary" icon={Lock} onClick={() => setShowCreateModal(true)}>إنشاء انتخابات جديدة</Button>
         </div>
@@ -1324,17 +1511,17 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
             <p className="text-sm text-slate-500">
               المرشحون لانتخابات: <span className="font-bold text-slate-900">{elections.find(e => e.id === selectedElectionId)?.title}</span>
             </p>
-            <Button 
-              icon={Plus} 
-              className="text-sm"
-              onClick={() => {
-                setEditingCandidate(null);
-                setCandidateForm({ name: '', party: '', image: '', districtId: districts[0]?.id || '', program: '' });
-                setShowCandidateModal(true);
-              }}
-            >
-              إضافة مرشح
-            </Button>
+                <Button 
+                  icon={Plus} 
+                  className="text-sm"
+                  onClick={() => {
+                    setEditingCandidate(null);
+                    setCandidateForm({ name: '', partyId: '', image: '', districtId: districts[0]?.id || '', listId: '', program: '' });
+                    setShowCandidateModal(true);
+                  }}
+                >
+                  إضافة مرشح
+                </Button>
           </div>
           
           {candidates.length === 0 ? (
@@ -1349,7 +1536,14 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
                   <img src={c.image || 'https://picsum.photos/seed/user/100/100'} alt={c.name} className="w-16 h-16 rounded-xl object-cover" />
                   <div className="flex-1">
                     <h5 className="text-sm font-bold text-slate-900">{c.name}</h5>
-                    <p className="text-xs text-slate-500">{c.party}</p>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      <Badge variant="info" className="text-[9px] px-1 py-0">
+                        {parties.find(p => p.id === c.partyId)?.name || 'بدون حزب'}
+                      </Badge>
+                      <Badge variant="secondary" className="text-[9px] px-1 py-0">
+                        {localLists.find(l => l.id === c.listId)?.name || 'بدون قائمة'}
+                      </Badge>
+                    </div>
                     <p className="text-[10px] text-indigo-600 mt-1 font-medium">
                       {districts.find(d => d.id === c.districtId)?.name || 'دائرة غير محددة'}
                     </p>
@@ -1360,9 +1554,10 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
                         setEditingCandidate(c);
                         setCandidateForm({ 
                           name: c.name, 
-                          party: c.party, 
+                          partyId: c.partyId || '', 
                           image: c.image || '', 
                           districtId: c.districtId || '', 
+                          listId: c.listId || '',
                           program: c.program || '' 
                         });
                         setShowCandidateModal(true);
@@ -1557,14 +1752,30 @@ const AdminDashboard = ({ userProfile }: { userProfile: any }) => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-slate-700">الحزب / القائمة</label>
-                  <input 
-                    type="text" 
-                    value={candidateForm.party}
-                    onChange={(e) => setCandidateForm({ ...candidateForm, party: e.target.value })}
+                  <label className="text-sm font-bold text-slate-700">الحزب (للقائمة الوطنية)</label>
+                  <select 
+                    value={candidateForm.partyId}
+                    onChange={(e) => setCandidateForm({ ...candidateForm, partyId: e.target.value })}
                     className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    placeholder="اسم الحزب"
-                  />
+                  >
+                    <option value="">-- اختر حزباً --</option>
+                    {parties.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">القائمة المحلية</label>
+                  <select 
+                    value={candidateForm.listId}
+                    onChange={(e) => setCandidateForm({ ...candidateForm, listId: e.target.value })}
+                    className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    <option value="">-- اختر قائمة محلية --</option>
+                    {localLists.filter(l => l.districtId === candidateForm.districtId).map(l => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-slate-700">رابط الصورة</label>
@@ -1757,6 +1968,8 @@ export default function App() {
   const [election, setElection] = useState<Election | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [districts, setDistricts] = useState<District[]>([]);
+  const [parties, setParties] = useState<Party[]>([]);
+  const [localLists, setLocalLists] = useState<LocalList[]>([]);
   const [transactions, setTransactions] = useState<BlockchainTransaction[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -1794,11 +2007,27 @@ export default function App() {
         }, (error) => {
           handleFirestoreError(error, OperationType.LIST, `elections/${electionDoc.id}/districts`);
         });
+
+        const partiesRef = collection(db, 'elections', electionDoc.id, 'parties');
+        onSnapshot(partiesRef, (partySnapshot) => {
+          setParties(partySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, `elections/${electionDoc.id}/parties`);
+        });
+
+        const localListsRef = collection(db, 'elections', electionDoc.id, 'local_lists');
+        onSnapshot(localListsRef, (listSnapshot) => {
+          setLocalLists(listSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, `elections/${electionDoc.id}/local_lists`);
+        });
       } else {
         // Fallback to mock data
         setElection(MOCK_ELECTION);
         setCandidates(MOCK_ELECTION.candidates);
         setDistricts(MOCK_ELECTION.districts);
+        setParties(MOCK_PARTIES);
+        setLocalLists(MOCK_LOCAL_LISTS);
       }
       setLoading(false);
     }, (error) => {
@@ -1980,8 +2209,8 @@ export default function App() {
                 {[
                   { id: 'public', label: 'البوابة العامة', icon: BarChart3 },
                   { id: 'voter', label: 'بوابة الناخب', icon: Smartphone },
-                  { id: 'admin', label: 'لوحة التحكم', icon: LayoutDashboard }
-                ].map((item) => (
+                  { id: 'admin', label: 'لوحة التحكم', icon: LayoutDashboard, adminOnly: true }
+                ].filter(p => !p.adminOnly || userProfile?.role === 'admin').map((item) => (
                   <button
                     key={item.id}
                     onClick={() => {
@@ -2023,6 +2252,8 @@ export default function App() {
             election={election}
             candidates={candidates}
             districts={districts}
+            parties={parties}
+            localLists={localLists}
             loading={loading}
             onLogin={handleLogin}
             onVoteSuccess={() => {
@@ -2030,7 +2261,26 @@ export default function App() {
             }} 
           />
         )}
-        {activePortal === 'admin' && userProfile?.role === 'admin' && <AdminDashboard userProfile={userProfile} />}
+        {activePortal === 'admin' && (
+          userProfile?.role === 'admin' ? (
+            <AdminDashboard 
+              userProfile={userProfile} 
+              parties={parties}
+              localLists={localLists}
+            />
+          ) : (
+            <div className="h-96 flex flex-col items-center justify-center text-center space-y-6">
+              <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center">
+                <Lock size={40} />
+              </div>
+              <div className="max-w-md space-y-2">
+                <h2 className="text-2xl font-bold text-slate-900">غير مصرح لك بالدخول</h2>
+                <p className="text-slate-500">هذه المنطقة مخصصة لمشرفي النظام فقط. يرجى تسجيل الدخول بحساب المشرف للوصول إلى لوحة التحكم.</p>
+              </div>
+              <Button onClick={() => setActivePortal('public')} variant="outline">العودة للبوابة العامة</Button>
+            </div>
+          )
+        )}
       </main>
 
       {/* Footer */}

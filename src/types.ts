@@ -6,14 +6,28 @@ export interface District {
   voterCount: number;
 }
 
+export interface LocalList {
+  id: string;
+  name: string;
+  districtId: string;
+  candidates: Candidate[];
+}
+
+export interface Party {
+  id: string;
+  name: string;
+  logo: string;
+}
+
 export interface Candidate {
   id: string;
   name: string;
-  party: string;
+  partyId?: string;
   image: string;
   votes: number;
   program: string;
   districtId: string;
+  listId?: string;
 }
 
 export interface Election {

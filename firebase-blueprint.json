@@ -58,6 +58,30 @@
       },
       "required": ["id", "electionId", "name", "voterCount"]
     },
+    "Party": {
+      "title": "Party",
+      "description": "A political party in an election.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the party." },
+        "name": { "type": "string", "description": "The name of the party." },
+        "logo": { "type": "string", "format": "uri", "description": "The URL of the party's logo." },
+        "votes": { "type": "integer", "description": "The number of votes the party has received." }
+      },
+      "required": ["id", "name", "votes"]
+    },
+    "LocalList": {
+      "title": "LocalList",
+      "description": "A local list in an election.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the local list." },
+        "name": { "type": "string", "description": "The name of the local list." },
+        "districtId": { "type": "string", "description": "The ID of the district the local list belongs to." },
+        "votes": { "type": "integer", "description": "The number of votes the local list has received." }
+      },
+      "required": ["id", "name", "districtId", "votes"]
+    },
     "Vote": {
       "title": "Vote",
       "description": "A cast vote (anonymized).",
@@ -89,6 +113,14 @@
     "/elections/{electionId}/districts/{districtId}": {
       "schema": "District",
       "description": "Districts for a specific election."
+    },
+    "/elections/{electionId}/parties/{partyId}": {
+      "schema": "Party",
+      "description": "Parties for a specific election."
+    },
+    "/elections/{electionId}/local_lists/{listId}": {
+      "schema": "LocalList",
+      "description": "Local lists for a specific election."
     },
     "/elections/{electionId}/votes/{voteId}": {
       "schema": "Vote",
