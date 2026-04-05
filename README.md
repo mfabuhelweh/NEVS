@@ -18,3 +18,11 @@ View your app in AI Studio: https://ai.studio/apps/54adf7b8-3b3d-4f8b-8ec0-98146
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Connect your own Firebase database
+
+1. Copy `.env.example` to `.env.local`.
+2. Fill all `VITE_FIREBASE_*` variables from your Firebase project settings.
+3. (Optional fallback) If no `VITE_FIREBASE_*` values are provided, the app uses `firebase-applet-config.json`.
+4. Start the app with `npm run dev` and confirm Firestore reads/writes work.
+

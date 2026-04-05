@@ -1,7 +1,43 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import defaultFirebaseConfig from '../firebase-applet-config.json';
+
+interface FirebaseConfig {
+  projectId: string;
+  appId: string;
+  apiKey: string;
+  authDomain: string;
+  firestoreDatabaseId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  measurementId?: string;
+}
+
+const envFirebaseConfig: Partial<FirebaseConfig> = {
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_DATABASE_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+};
+
+const hasEnvConfig = Boolean(
+  envFirebaseConfig.projectId
+  && envFirebaseConfig.appId
+  && envFirebaseConfig.apiKey
+  && envFirebaseConfig.authDomain
+  && envFirebaseConfig.firestoreDatabaseId
+  && envFirebaseConfig.storageBucket
+  && envFirebaseConfig.messagingSenderId,
+);
+
+const firebaseConfig: FirebaseConfig = hasEnvConfig
+  ? (envFirebaseConfig as FirebaseConfig)
+  : (defaultFirebaseConfig as FirebaseConfig);
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
@@ -50,12 +86,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
         providerId: provider.providerId,
         displayName: provider.displayName,
         email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
+        photoUrl: provider.photoURL,
+      })) || [],
     },
     operationType,
-    path
-  }
+    path,
+  };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
@@ -64,10 +100,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
+    console.info('Firestore connected successfully.');
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+    if (error instanceof Error && error.message.includes('offline')) {
+      console.error('Please check your Firebase configuration.');
+      return;
     }
+
+    console.warn('Firestore connectivity check was blocked (likely by security rules).');
   }
 }
+
 testConnection();
