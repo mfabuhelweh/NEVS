@@ -94,6 +94,26 @@ export const MOCK_CANDIDATES: Candidate[] = [
     program: 'تعزيز حقوق الإنسان والحريات العامة.',
     districtId: 'd4',
     listId: 'l4'
+  },
+  {
+    id: 'c9',
+    name: 'أ. فيصل الحربي',
+    partyId: 'p2',
+    image: 'https://picsum.photos/seed/c9/200/200',
+    votes: 0,
+    program: 'تطوير القطاع السياحي وتعزيز التراث الوطني.',
+    districtId: 'd1',
+    listId: 'l5'
+  },
+  {
+    id: 'c10',
+    name: 'د. ريم العنزي',
+    partyId: 'p3',
+    image: 'https://picsum.photos/seed/c10/200/200',
+    votes: 0,
+    program: 'تحسين جودة الحياة في المدن وتطوير النقل العام.',
+    districtId: 'd1',
+    listId: 'l5'
   }
 ];
 
@@ -121,6 +141,12 @@ export const MOCK_LOCAL_LISTS: LocalList[] = [
     name: 'قائمة المستقبل',
     districtId: 'd4',
     candidates: [MOCK_CANDIDATES[6], MOCK_CANDIDATES[7]]
+  },
+  {
+    id: 'l5',
+    name: 'قائمة النهضة',
+    districtId: 'd1',
+    candidates: [MOCK_CANDIDATES[8], MOCK_CANDIDATES[9]]
   }
 ];
 

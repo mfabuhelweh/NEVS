@@ -39,6 +39,7 @@
         "id": { "type": "string", "description": "The unique ID of the candidate." },
         "electionId": { "type": "string", "description": "The ID of the election the candidate is in." },
         "districtId": { "type": "string", "description": "The ID of the district the candidate is running in." },
+        "listId": { "type": "string", "description": "The ID of the local list the candidate belongs to." },
         "name": { "type": "string", "description": "The name of the candidate." },
         "party": { "type": "string", "description": "The party the candidate belongs to." },
         "image": { "type": "string", "format": "uri", "description": "The URL of the candidate's image." },

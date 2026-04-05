@@ -118,12 +118,14 @@ service cloud.firestore {
 
     function isValidCandidate(data) {
       return data.name is string &&
-             (!('votes' in data) || data.votes is number);
+             (!('votes' in data) || data.votes is number) &&
+             (!('listId' in data) || data.listId is string);
     }
 
     function isValidVote(data) {
       return data.electionId is string &&
-             data.candidateId is string &&
+             (!('candidateId' in data) || data.candidateId is string) &&
+             (!('candidateIds' in data) || data.candidateIds is list) &&
              data.districtId is string &&
              data.timestamp is timestamp;
     }

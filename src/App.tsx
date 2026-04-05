@@ -54,7 +54,7 @@ import {
   Line
 } from 'recharts';
 import { cn } from './lib/utils';
-import { MOCK_ELECTION, MOCK_TRANSACTIONS, MOCK_PARTIES, MOCK_LOCAL_LISTS } from './mockData';
+import { MOCK_ELECTION, MOCK_TRANSACTIONS, MOCK_PARTIES, MOCK_LOCAL_LISTS, MOCK_CANDIDATES } from './mockData';
 import { Election, Candidate, Voter, BlockchainTransaction, District, Party, LocalList } from './types';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { 
@@ -350,7 +350,7 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
   const [isVerifying, setIsVerifying] = useState(false);
   const [isGeneratingZKP, setIsGeneratingZKP] = useState(false);
   const [selectedLocalList, setSelectedLocalList] = useState<string | null>(null);
-  const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null);
+  const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   const [selectedParty, setSelectedParty] = useState<string | null>(null);
 
   useEffect(() => {
@@ -358,6 +358,11 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
       setStep('success');
     }
   }, [userProfile]);
+
+  // Reset selected candidates when list changes
+  useEffect(() => {
+    setSelectedCandidates([]);
+  }, [selectedLocalList]);
 
   const handleLogin = async () => {
     const cleanId = nationalId.trim().replace(/\D/g, '');
@@ -439,7 +444,7 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
       const voteId = doc(collection(db, 'votes')).id;
       const voteData = {
         electionId: election.id,
-        candidateId: selectedCandidate || 'none',
+        candidateIds: selectedCandidates,
         listId: selectedLocalList || 'none',
         partyId: selectedParty,
         districtId: voterDistrict?.id || userProfile?.districtId || 'district-1',
@@ -461,18 +466,25 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
       batch.update(doc(db, 'voters_registry', nationalId), { hasVoted: true });
       
       // 3. Increment candidate votes if selected
-      if (selectedCandidate) {
-        batch.update(doc(db, 'elections', election.id, 'candidates', selectedCandidate), {
+      selectedCandidates.forEach(cId => {
+        batch.update(doc(db, 'elections', election.id, 'candidates', cId), {
           votes: increment(1)
         });
-      }
+      });
 
       // 4. Increment party votes
       batch.update(doc(db, 'elections', election.id, 'parties', selectedParty), {
         votes: increment(1)
       });
       
-      // 5. Increment election total votes
+      // 5. Increment local list votes
+      if (selectedLocalList) {
+        batch.update(doc(db, 'elections', election.id, 'local_lists', selectedLocalList), {
+          votes: increment(1)
+        });
+      }
+      
+      // 6. Increment election total votes
       batch.update(doc(db, 'elections', election.id), {
         totalVotes: increment(1)
       });
@@ -713,17 +725,23 @@ const VoterPortal = ({ user, userProfile, onVoteSuccess, election, candidates, d
                               candidates.filter(c => c.listId === list.id).map((candidate) => (
                                 <div 
                                   key={candidate.id}
-                                  onClick={() => setSelectedCandidate(selectedCandidate === candidate.id ? null : candidate.id)}
+                                  onClick={() => {
+                                    if (selectedCandidates.includes(candidate.id)) {
+                                      setSelectedCandidates(selectedCandidates.filter(id => id !== candidate.id));
+                                    } else {
+                                      setSelectedCandidates([...selectedCandidates, candidate.id]);
+                                    }
+                                  }}
                                   className={cn(
                                     "p-3 rounded-xl border transition-all cursor-pointer flex items-center gap-3",
-                                    selectedCandidate === candidate.id 
+                                    selectedCandidates.includes(candidate.id) 
                                       ? "border-indigo-400 bg-white shadow-sm" 
                                       : "border-slate-100 bg-slate-50/50 hover:bg-white"
                                   )}
                                 >
-                                  <img src={candidate.image} alt={candidate.name} className="w-10 h-10 rounded-lg object-cover" />
+                                  <img src={candidate.image} alt={candidate.name} className="w-10 h-10 rounded-lg object-cover" referrerPolicy="no-referrer" />
                                   <span className="text-sm font-medium text-slate-700">{candidate.name}</span>
-                                  {selectedCandidate === candidate.id && (
+                                  {selectedCandidates.includes(candidate.id) && (
                                     <CheckCircle2 size={16} className="text-indigo-600 mr-auto" />
                                   )}
                                 </div>
@@ -1241,15 +1259,15 @@ const AdminDashboard = ({ userProfile, parties, localLists }: { userProfile: any
       console.log("Districts seeded.");
 
       // 3. Create Candidates
-      for (const candidate of MOCK_ELECTION.candidates) {
+      for (const candidate of MOCK_CANDIDATES) {
         const cRef = doc(db, 'elections', electionId, 'candidates', candidate.id);
         batch.set(cRef, {
           name: candidate.name,
-          partyId: candidate.partyId,
+          partyId: candidate.partyId || '',
           image: candidate.image,
           votes: 0,
           districtId: candidate.districtId,
-          listId: candidate.listId,
+          listId: candidate.listId || '',
           program: candidate.program || ''
         });
       }
@@ -1282,7 +1300,8 @@ const AdminDashboard = ({ userProfile, parties, localLists }: { userProfile: any
         { nationalId: '1111111111', name: 'أحمد محمد', districtName: 'العاصمة - المنطقة الأولى' },
         { nationalId: '2222222222', name: 'سارة علي', districtName: 'المنطقة الشمالية' },
         { nationalId: '3333333333', name: 'محمود حسن', districtName: 'المنطقة الساحلية' },
-        { nationalId: '4444444444', name: 'ليلى إبراهيم', districtName: 'المنطقة الجنوبية' }
+        { nationalId: '4444444444', name: 'ليلى إبراهيم', districtName: 'المنطقة الجنوبية' },
+        { nationalId: '5555555555', name: 'فيصل الحربي', districtName: 'العاصمة - المنطقة الأولى' }
       ];
       for (const voter of initialVoters) {
         const vRef = doc(db, 'voters_registry', voter.nationalId);
@@ -1533,7 +1552,7 @@ const AdminDashboard = ({ userProfile, parties, localLists }: { userProfile: any
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {candidates.map((c) => (
                 <div key={c.id} className="p-4 rounded-2xl border border-slate-100 flex items-center gap-4 bg-white hover:shadow-md transition-all">
-                  <img src={c.image || 'https://picsum.photos/seed/user/100/100'} alt={c.name} className="w-16 h-16 rounded-xl object-cover" />
+                  <img src={c.image || 'https://picsum.photos/seed/user/100/100'} alt={c.name} className="w-16 h-16 rounded-xl object-cover" referrerPolicy="no-referrer" />
                   <div className="flex-1">
                     <h5 className="text-sm font-bold text-slate-900">{c.name}</h5>
                     <div className="flex flex-wrap gap-1 mt-1">
